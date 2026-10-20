@@ -69,6 +69,19 @@ npx tsx scripts/seed-demo.ts U007   # prints a session cookie for viewer U007
 Set that cookie (`oc_session`) for `localhost:3000` in the browser and open
 `/chart`. The demo viewer is also an admin, so `/admin` works too.
 
+### Clickable demo, no server
+
+```sh
+npm run demo          # dev server for the demo
+npm run demo:build    # dist/demo/org-chart-demo.html, one file to open or share
+```
+
+`demo/` wraps the real chart and admin pages in a mock Slack workspace
+(profile link, App Home, `/orgchart`, DMs and channels opened from the chart).
+`demo/mockApi.ts` answers the pages' `/api` calls in the browser from sample
+people in `demo/data.ts`, using the same `buildChart()` as the server, so admin
+edits show on the chart. Nothing in the demo talks to Slack.
+
 ## Tests
 
 ```sh
