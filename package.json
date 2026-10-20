@@ -10,9 +10,11 @@
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "dev:web": "vite",
+    "demo": "vite --config demo/vite.config.ts",
+    "demo:build": "vite build --config demo/vite.config.ts && node demo/inline.mjs",
     "build": "prisma generate && tsc -p tsconfig.json && vite build",
     "start": "node dist/server/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit && tsc -p demo/tsconfig.json --noEmit",
     "test": "vitest run",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",

@@ -1,0 +1,4 @@
+{
+  "extends": "../web/tsconfig.json",
+  "include": [".", "../web/src", "../src/shared", "../src/server/chart/tree.ts", "../src/server/admin/csv.ts"]
+}
