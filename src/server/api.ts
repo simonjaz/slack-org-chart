@@ -4,11 +4,13 @@ import { prisma as defaultPrisma, withTenant } from './db.js';
 import { requireViewer } from './auth.js';
 import { getChart } from './chart/service.js';
 import { adminSource } from './admin/access.js';
-import { adminRouter } from './admin/api.js';
+import { adminRouter, type AdminApiDeps } from './admin/api.js';
+import { actionsRouter, type ActionsDeps } from './actions.js';
 
-export interface ApiDeps {
+export interface ApiDeps extends Omit<AdminApiDeps, 'db'> {
   db?: PrismaClient;
-  enqueueWorkspaceSync?: (tenant: string) => Promise<void>;
+  // Group DMs and channels from the chart. Left out, those routes are absent.
+  actions?: Omit<ActionsDeps, 'db'>;
 }
 
 export function apiRouter(deps: ApiDeps = {}): Router {
@@ -42,7 +44,10 @@ export function apiRouter(deps: ApiDeps = {}): Router {
     }
   });
 
-  router.use('/api/admin', adminRouter({ db, enqueueWorkspaceSync: deps.enqueueWorkspaceSync }));
+  if (deps.actions) router.use(actionsRouter({ ...deps.actions, db }));
+
+  const { actions: _actions, ...adminDeps } = deps;
+  router.use('/api/admin', adminRouter({ ...adminDeps, db }));
 
   return router;
 }

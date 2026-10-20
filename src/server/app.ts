@@ -9,12 +9,21 @@ import { prisma as defaultPrisma } from './db.js';
 import { apiRouter } from './api.js';
 import { authRouter, requireSameOrigin } from './auth.js';
 import { markUninstalled, tenantKey } from './slack/installationStore.js';
+import { forgetRevokedUsers, grantRouter, revokeUserGrant } from './slack/grants.js';
+import { slackSurfaces } from './slack/surfaces.js';
+import type { ActionsClient } from './actions.js';
+import type { LinkField } from './admin/service.js';
+import { decrypt } from './crypto.js';
 
 export interface AppDeps {
   config: Config;
   installationStore: InstallationStore;
   enqueueUserSync: (tenant: string, userId: string) => Promise<void>;
   enqueueWorkspaceSync?: (tenant: string) => Promise<void>;
+  enqueueProfileLinks?: (tenant: string) => Promise<void>;
+  listLinkFields?: (tenant: string) => Promise<LinkField[]>;
+  // Builds the client group DMs and channels are made with. Tests pass a fake.
+  userClient?: (token: string) => ActionsClient;
   ensurePerson: (tenant: string, userId: string) => Promise<void>;
   db?: PrismaClient;
   webDistDir?: string;
@@ -47,6 +56,34 @@ export function createApp(deps: AppDeps) {
 
   const tenantOf = (ctx: Context) =>
     tenantKey({ teamId: ctx.teamId, enterpriseId: ctx.enterpriseId, isEnterpriseInstall: ctx.isEnterpriseInstall });
+  const surfaces = slackSurfaces({ baseUrl: config.BASE_URL, ensurePerson: deps.ensurePerson, db });
+
+  // App Home: the viewer's manager, peers and reports, and the full chart.
+  bolt.event('app_home_opened', async ({ event, context, client }) => {
+    if (event.tab !== 'home') return;
+    const view = await surfaces.home(tenantOf(context), event.user);
+    await client.views.publish({ user_id: event.user, view });
+  });
+
+  // /orgchart, /orgchart @name or /orgchart Jane: a private reply.
+  bolt.command('/orgchart', async ({ command, ack, respond, context }) => {
+    await ack();
+    const reply = await surfaces.command(tenantOf(context), command.user_id, command.text);
+    await respond({ response_type: 'ephemeral', ...reply });
+  });
+
+  // Message shortcut "View in org chart": the message's author.
+  bolt.shortcut('view_in_org_chart', async ({ shortcut, ack, client, context }) => {
+    await ack();
+    if (shortcut.type !== 'message_action') return;
+    const view = await surfaces.authorModal(tenantOf(context), shortcut.user.id, shortcut.message.user);
+    await client.views.open({ trigger_id: shortcut.trigger_id, view });
+  });
+
+  // Link buttons still send an action, which Slack wants acknowledged.
+  bolt.action('open_chart', async ({ ack }) => {
+    await ack();
+  });
 
   // Live updates: one person, within seconds.
   bolt.event('user_change', async ({ event, context }) => {
@@ -65,6 +102,8 @@ export function createApp(deps: AppDeps) {
   });
   bolt.event('tokens_revoked', async ({ event, context }) => {
     if (event.tokens.bot?.length) await markUninstalled(tenantOf(context), db);
+    // People who removed the app from their account, or were deactivated.
+    if (event.tokens.oauth?.length) await forgetRevokedUsers(tenantOf(context), event.tokens.oauth, db);
   });
 
   const web = receiver.app;
@@ -83,10 +122,33 @@ export function createApp(deps: AppDeps) {
       clientSecret: config.SLACK_CLIENT_SECRET,
       secureCookies: config.NODE_ENV === 'production',
       ensurePerson: deps.ensurePerson,
+      onSignOut: (tenant, userId) => revokeUserGrant(tenant, userId, { encryptionKey: config.TOKEN_ENCRYPTION_KEY, db }),
       db,
     }),
   );
-  web.use(apiRouter({ db, enqueueWorkspaceSync: deps.enqueueWorkspaceSync }));
+  web.use(
+    grantRouter({
+      baseUrl: config.BASE_URL,
+      clientId: config.SLACK_CLIENT_ID,
+      clientSecret: config.SLACK_CLIENT_SECRET,
+      encryptionKey: config.TOKEN_ENCRYPTION_KEY,
+      secureCookies: config.NODE_ENV === 'production',
+      onProfileWriter: deps.enqueueProfileLinks,
+      db,
+    }),
+  );
+  web.use(
+    apiRouter({
+      db,
+      enqueueWorkspaceSync: deps.enqueueWorkspaceSync,
+      enqueueProfileLinks: deps.enqueueProfileLinks,
+      listLinkFields: deps.listLinkFields,
+      revokeToken: async (sealed) => {
+        await bolt.client.auth.revoke({ token: decrypt(sealed, config.TOKEN_ENCRYPTION_KEY) });
+      },
+      actions: { encryptionKey: config.TOKEN_ENCRYPTION_KEY, userClient: deps.userClient },
+    }),
+  );
 
   const dist = deps.webDistDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
   web.use(express.static(dist, { index: false, maxAge: '1h' }));

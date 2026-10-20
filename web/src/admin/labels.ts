@@ -58,6 +58,14 @@ export function describeChange(entry: AuditEntry, nameOf: (id: string) => string
       }
       return `changed settings: ${parts.join(', ') || 'no change'}`;
     }
+    case 'profile_link.connect':
+      return 'connected the profile link field';
+    case 'profile_link.disconnect':
+      return 'disconnected the profile link field';
+    case 'profile_link.field':
+      return (after as { fieldId?: string | null }).fieldId
+        ? 'picked the field for profile links'
+        : 'turned off profile links';
   }
   const keys = Object.keys(FIELD_LABEL) as (keyof OverrideFields)[];
   const parts = keys

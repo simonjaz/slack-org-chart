@@ -7,6 +7,8 @@ import { requireAdmin } from './access.js';
 import {
   AdminError,
   addAdmin,
+  disconnectProfileWriter,
+  getProfileLink,
   getSettings,
   importCsv,
   listAdmins,
@@ -14,8 +16,10 @@ import {
   listPeople,
   listSyncRuns,
   removeAdmin,
+  setProfileLinkField,
   updatePerson,
   updateSettings,
+  type LinkField,
 } from './service.js';
 
 const slackId = z.string().regex(/^[UW][A-Z0-9]{2,}$/, 'Not a Slack user id');
@@ -44,6 +48,12 @@ export interface AdminApiDeps {
   db?: PrismaClient;
   // Queues a full sync of one workspace. Absent in tests.
   enqueueWorkspaceSync?: (tenant: string) => Promise<void>;
+  // Link-type custom profile fields, read from Slack with the bot token.
+  listLinkFields?: (tenant: string) => Promise<LinkField[]>;
+  // Queues a profile link fill. Absent in tests.
+  enqueueProfileLinks?: (tenant: string) => Promise<void>;
+  // Gives an encrypted token back to Slack (best effort).
+  revokeToken?: (sealed: string) => Promise<void>;
 }
 
 // Everything under /api/admin. Mounted after requireViewer, so req.viewer is
@@ -122,6 +132,60 @@ export function adminRouter(deps: AdminApiDeps = {}): Router {
     '/settings',
     handle((tx, tenant, actor, req) => updateSettings(tx, tenant, actor, settingsPatch.parse(req.body))),
   );
+
+  const linkFields = async (tenant: string) => (deps.listLinkFields ? deps.listLinkFields(tenant).catch(() => []) : []);
+
+  router.get('/profile-link', async (req, res, next) => {
+    try {
+      const { tenant } = req.viewer!;
+      const fields = await linkFields(tenant);
+      res.json(await withTenant(tenant, (tx) => getProfileLink(tx, tenant, fields, Boolean(deps.enqueueProfileLinks)), db));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.patch('/profile-link', async (req, res, next) => {
+    try {
+      const { tenant, slackUserId } = req.viewer!;
+      const { fieldId } = z.object({ fieldId: z.string().min(1).max(40).nullable() }).strict().parse(req.body);
+      const fields = await linkFields(tenant);
+      const result = await withTenant(
+        tenant,
+        async (tx) => {
+          await setProfileLinkField(tx, tenant, slackUserId, fieldId, fields);
+          return getProfileLink(tx, tenant, fields, Boolean(deps.enqueueProfileLinks));
+        },
+        db,
+      );
+      if (result.fieldId && result.writer) await deps.enqueueProfileLinks?.(tenant);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/profile-link/fill', async (req, res, next) => {
+    try {
+      if (!deps.enqueueProfileLinks) return res.status(503).json({ error: 'unavailable', message: 'Jobs are not running.' });
+      await deps.enqueueProfileLinks(req.viewer!.tenant);
+      res.status(202).json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.delete('/profile-link/writer', async (req, res, next) => {
+    try {
+      const { tenant, slackUserId } = req.viewer!;
+      const sealed = await withTenant(tenant, (tx) => disconnectProfileWriter(tx, tenant, slackUserId), db);
+      if (sealed) await deps.revokeToken?.(sealed).catch(() => {});
+      const fields = await linkFields(tenant);
+      res.json(await withTenant(tenant, (tx) => getProfileLink(tx, tenant, fields, Boolean(deps.enqueueProfileLinks)), db));
+    } catch (err) {
+      next(err);
+    }
+  });
 
   router.get(
     '/audit',

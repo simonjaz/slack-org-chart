@@ -36,3 +36,17 @@ export const BOT_SCOPES = [
 ];
 
 export const SIGN_IN_SCOPES = ['openid', 'email', 'profile'];
+
+// User scopes, asked for only when needed and never at install. Group DMs
+// and channels are created as the person, so the conversation is theirs.
+export const ACTION_USER_SCOPES = [
+  'im:write',
+  'mpim:write',
+  'channels:manage',
+  'channels:write.invites',
+  'groups:write',
+  'groups:write.invites',
+];
+
+// An admin grants this to fill the profile link field on everyone's profile.
+export const PROFILE_WRITER_SCOPES = ['users.profile:write'];

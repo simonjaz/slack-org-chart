@@ -4,6 +4,7 @@ import type {
   AdminPerson,
   AuditEntry,
   ImportResponse,
+  ProfileLinkSettings,
   SyncRunInfo,
   WorkspaceSettings,
 } from '../../../src/shared/admin';
@@ -284,7 +285,7 @@ export function SettingsTab() {
       )}
       {sync && sync.runs.length > 0 && (
         <ul className="sync-list">
-          {sync.runs.map((r) => (
+          {sync.runs.filter((r) => r.kind !== 'profile_links').map((r) => (
             <li key={r.startedAt}>
               <span>{formatTime(r.startedAt)}</span>
               <span className="muted">
@@ -295,11 +296,119 @@ export function SettingsTab() {
           ))}
         </ul>
       )}
+
+      <ProfileLinkSection />
     </section>
   );
 }
 
+// The profile link field: Slack has no button for apps on the profile card,
+// so a link field on every profile opens the chart on that person.
+function ProfileLinkSection() {
+  const [state, setState] = useState<ProfileLinkSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [queued, setQueued] = useState(false);
+  const granted = new URLSearchParams(window.location.search).get('grant');
+
+  useEffect(() => {
+    adminApi.profileLink().then(setState, (err) => setError(message(err)));
+  }, []);
+
+  const run = async (fn: () => Promise<ProfileLinkSettings>) => {
+    setError(null);
+    try {
+      setState(await fn());
+    } catch (err) {
+      setError(message(err));
+    }
+  };
+  const connectUrl = `/auth/grant?kind=profile&next=${encodeURIComponent('/admin#settings')}`;
+
+  return (
+    <>
+      <h2>Org chart link on profiles</h2>
+      <p>
+        Slack does not let apps add a button to the profile card. Instead, add a custom profile field of type{' '}
+        <strong>Link</strong> named &ldquo;Org chart&rdquo; (Slack admin settings, Profiles), pick it here and connect
+        an admin account. Every profile then shows a link that opens the chart on that person. Needs Slack Pro or
+        higher, and a Slack admin or owner to connect.
+      </p>
+      {granted === 'cancelled' && <p className="note note-warn">Slack access was not granted, so nothing changed.</p>}
+      {error && (
+        <p className="note note-error" role="alert">
+          {error}
+        </p>
+      )}
+      {state && (
+        <>
+          <label className="field">
+            <span>Link field</span>
+            <select
+              className="text-input"
+              value={state.fieldId ?? ''}
+              onChange={(e) => run(() => adminApi.setProfileLinkField(e.target.value || null))}
+            >
+              <option value="">Off</option>
+              {state.fields.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+              {state.fieldId && !state.fields.some((f) => f.id === state.fieldId) && (
+                <option value={state.fieldId}>Field {state.fieldId} (not found in Slack)</option>
+              )}
+            </select>
+            {state.fields.length === 0 && (
+              <span className="hint">No link fields found yet. Add one in Slack, then reload this page.</span>
+            )}
+          </label>
+          <p>
+            {state.writer ? (
+              <>
+                Connected by <strong>{state.writer.name ?? state.writer.slackUserId}</strong>.{' '}
+                <button type="button" className="link" onClick={() => run(adminApi.disconnectProfileWriter)}>
+                  Disconnect
+                </button>
+              </>
+            ) : (
+              <a className="button" href={connectUrl}>
+                Connect a Slack admin account
+              </a>
+            )}
+          </p>
+          {state.writer && state.fieldId && state.canFill && (
+            <button
+              type="button"
+              disabled={queued}
+              onClick={async () => {
+                try {
+                  await adminApi.fillProfileLinks();
+                  setQueued(true);
+                } catch (err) {
+                  setError(message(err));
+                }
+              }}
+            >
+              {queued ? 'Fill queued' : 'Fill links now'}
+            </button>
+          )}
+          {state.lastRun && (
+            <p className="muted small">
+              Last fill {formatTime(state.lastRun.startedAt)}:{' '}
+              {state.lastRun.finishedAt ? summarize(state.lastRun.counts) : 'running'}
+              {state.lastRun.errorCount > 0 &&
+                `, ${state.lastRun.errorCount} ${state.lastRun.errorCount === 1 ? 'problem' : 'problems'}`}
+            </p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function summarize(counts: unknown): string {
+  const links = (counts ?? {}) as { written?: number; unchanged?: number };
+  if (typeof links.written === 'number') return `${links.written} links written, ${links.unchanged ?? 0} already set`;
   const c = (counts ?? {}) as { members?: number; slackConnect?: number };
   const parts = [];
   if (typeof c.members === 'number') parts.push(`${c.members} members`);

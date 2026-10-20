@@ -2,8 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { OrgChart } from 'd3-org-chart';
 import type { ChartNode, ChartResponse } from '../../src/shared/chart';
 import { ancestorIds, filterNodes } from '../../src/shared/filter';
-import { loadChart, loadMe, type LoadResult } from './api';
+import { MAX_GROUP_DM_OTHERS, channelName, type ChannelResult } from '../../src/shared/actions';
+import { loadChart, loadMe, loginUrl, type LoadResult } from './api';
 import { CARD_HEIGHT, CARD_WIDTH, GROUP_HEIGHT, avatarHtml, badgeHtml, cardHtml } from './card';
+import {
+  ActionFailed,
+  NeedsGrant,
+  actionsApi,
+  channelLink,
+  dmLink,
+  grantUrl,
+  savePending,
+  takePending,
+  webChannelLink,
+  type Pending,
+} from './actions';
 
 type Datum = ChartNode & { _expanded?: boolean; _centered?: boolean };
 
@@ -19,9 +32,19 @@ const readShowExternal = () => {
 export function ChartPage() {
   const [result, setResult] = useState<LoadResult | null>(null);
   useEffect(() => {
-    loadChart(readFocusParam()).then(setResult, () =>
-      setResult({ status: 'error', message: 'The chart could not load. Check your connection.' }),
-    );
+    loadChart(readFocusParam()).then((r) => {
+      // A link from another workspace's Slack while signed in to this one:
+      // sign in again for that workspace, once.
+      const params = new URLSearchParams(window.location.search);
+      const team = params.get('team');
+      if (r.status === 'ok' && team && team !== r.data.workspace.teamId && !params.has('switched')) {
+        params.set('switched', '1');
+        window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+        window.location.assign(loginUrl());
+        return;
+      }
+      setResult(r);
+    }, () => setResult({ status: 'error', message: 'The chart could not load. Check your connection.' }));
   }, []);
 
   if (!result) return <div className="state">Loading the org chart…</div>;
@@ -41,6 +64,13 @@ function Chart({ data }: { data: ChartResponse }) {
   const chartRef = useRef<OrgChart<Datum> | null>(null);
   const [showExternal, setShowExternal] = useState(readShowExternal);
   const [selected, setSelected] = useState<ChartNode | null>(null);
+  // People ticked for Message, Group DM or Create channel.
+  const [picked, setPicked] = useState<string[]>([]);
+  const pickedRef = useRef(new Set<string>());
+  pickedRef.current = new Set(picked);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [channelDraft, setChannelDraft] = useState<{ name: string; isPrivate: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
@@ -52,6 +82,7 @@ function Chart({ data }: { data: ChartResponse }) {
     [data.nodes, showExternal],
   );
   const externalCount = useMemo(() => data.nodes.filter((n) => n.badge).length, [data.nodes]);
+  const everyone = useMemo(() => new Map(data.nodes.map((n) => [n.id, n])), [data.nodes]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
   // Draw (or redraw after a filter change) opened on the focus person: their
@@ -80,6 +111,8 @@ function Chart({ data }: { data: ChartResponse }) {
         cardHtml(d.data, {
           isViewer: d.data.id === data.viewerId,
           isFocus: d.data.id === data.focusId,
+          selectable: true,
+          selected: pickedRef.current.has(d.data.id),
         }),
       )
       .buttonContent(({ node }) => {
@@ -106,6 +139,108 @@ function Chart({ data }: { data: ChartResponse }) {
       .render();
     showAround(chart, focusId, false);
   }, [nodes, byId, data.focusId, data.viewerId]);
+
+  // Ticking a card's box picks the person without opening their panel. The
+  // listener runs in the capture phase, before the chart's own click.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onClick = (e: MouseEvent) => {
+      const box = (e.target as Element | null)?.closest?.('[data-select]') as HTMLInputElement | null;
+      const label = (e.target as Element | null)?.closest?.('.card-select');
+      if (!box && !label) return;
+      e.stopPropagation();
+      if (!box) return;
+      const id = box.dataset.select!;
+      setPicked((prev) => (box.checked ? [...new Set([...prev, id])] : prev.filter((p) => p !== id)));
+    };
+    container.addEventListener('click', onClick, true);
+    return () => container.removeEventListener('click', onClick, true);
+  }, []);
+
+  // Keep the drawn cards in step with picks made elsewhere (panel, Clear).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    for (const box of container.querySelectorAll<HTMLInputElement>('[data-select]')) {
+      const on = pickedRef.current.has(box.dataset.select!);
+      box.checked = on;
+      box.closest('.card')?.classList.toggle('card-selected', on);
+    }
+  }, [picked]);
+
+  // Back from Slack's permission screen: restore the picks and carry on.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const grant = params.get('grant');
+    if (!grant) return;
+    params.delete('grant');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+    const pending = takePending();
+    if (!pending) return;
+    setPicked(pending.userIds);
+    if (grant !== 'ok') {
+      setNotice({ kind: 'warn', text: 'Org Chart was not allowed to start conversations, so nothing was created.' });
+      return;
+    }
+    if (pending.action === 'channel') setChannelDraft({ name: pending.name ?? '', isPrivate: Boolean(pending.isPrivate) });
+    else void startConversation(pending.userIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const togglePick = (id: string) =>
+    setPicked((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+
+  const nameOf = (id: string) => everyone.get(id)?.name ?? id;
+
+  // Sends the person to Slack's permission screen, remembering what they did.
+  const askForGrant = (pending: Pending) => {
+    savePending(pending);
+    const next = window.location.pathname + window.location.search;
+    window.location.assign(grantUrl(next));
+  };
+
+  const openInSlack = (teamId: string, channelId: string) => {
+    window.location.href = channelLink(teamId, channelId);
+  };
+
+  const startConversation = async (userIds: string[]) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await actionsApi.conversation(userIds);
+      openInSlack(res.teamId, res.channelId);
+      setNotice({
+        kind: 'ok',
+        text: `Opened a group DM with ${listNames(userIds.map(nameOf))} in Slack.`,
+        link: webChannelLink(res.teamId, res.channelId),
+      });
+      setPicked([]);
+    } catch (err) {
+      if (err instanceof NeedsGrant) return askForGrant({ action: 'conversation', userIds });
+      setNotice({ kind: 'error', text: message(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createChannel = async (name: string, isPrivate: boolean) => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await actionsApi.channel(name, isPrivate, picked);
+      setChannelDraft(null);
+      openInSlack(res.teamId, res.channelId);
+      setNotice(channelNotice(res, nameOf, picked));
+      setPicked([]);
+    } catch (err) {
+      if (err instanceof NeedsGrant) return askForGrant({ action: 'channel', userIds: picked, name, isPrivate });
+      setNotice({ kind: 'error', text: message(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -203,7 +338,206 @@ function Chart({ data }: { data: ChartResponse }) {
         </div>
       </header>
       <div className="chart" ref={containerRef} />
-      {selected && <PersonPanel node={selected} teamId={data.workspace.teamId} onClose={() => setSelected(null)} />}
+      {selected && (
+        <PersonPanel
+          node={selected}
+          teamId={data.workspace.teamId}
+          isViewer={selected.id === data.viewerId}
+          picked={picked.includes(selected.id)}
+          onPick={() => togglePick(selected.id)}
+          onClose={() => setSelected(null)}
+        />
+      )}
+      {notice && <NoticeBar notice={notice} onClose={() => setNotice(null)} />}
+      {picked.length > 0 && (
+        <ActionBar
+          picked={picked}
+          busy={busy}
+          dm={picked.length === 1 ? dmLink(data.workspace.teamId, picked[0]!) : null}
+          onGroupDm={() => startConversation(picked)}
+          onChannel={() => setChannelDraft({ name: '', isPrivate: false })}
+          onClear={() => setPicked([])}
+        />
+      )}
+      {channelDraft && (
+        <ChannelDialog
+          draft={channelDraft}
+          people={picked.map(nameOf)}
+          busy={busy}
+          onCreate={createChannel}
+          onCancel={() => setChannelDraft(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface Notice {
+  kind: 'ok' | 'warn' | 'error';
+  text: string;
+  link?: string;
+  // People Slack would not add to a new channel, offered a group DM instead.
+  retry?: { label: string; userIds: string[] };
+}
+
+function channelNotice(res: ChannelResult, nameOf: (id: string) => string, picked: string[]): Notice {
+  const link = webChannelLink(res.teamId, res.channelId);
+  if (!res.notInvited.length) {
+    return { kind: 'ok', text: `Created #${res.name} with ${listNames(res.invited.map(nameOf))}.`, link };
+  }
+  const left = res.notInvited.map((n) => `${nameOf(n.userId)} ${n.reason}`).join('; ');
+  const total = picked.length;
+  return {
+    kind: 'warn',
+    text: `Created #${res.name}, but Slack did not add everyone: ${left}.`,
+    link,
+    ...(total <= MAX_GROUP_DM_OTHERS ? { retry: { label: 'Start a group DM with everyone instead', userIds: picked } } : {}),
+  };
+}
+
+function listNames(names: string[]): string {
+  if (names.length <= 2) return names.join(' and ');
+  if (names.length <= 4) return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `${names.slice(0, 3).join(', ')} and ${names.length - 3} others`;
+}
+
+function message(err: unknown): string {
+  if (err instanceof ActionFailed) return err.message;
+  return 'Slack could not be reached. Check your connection and try again.';
+}
+
+function ActionBar(props: {
+  picked: string[];
+  busy: boolean;
+  dm: string | null;
+  onGroupDm: () => void;
+  onChannel: () => void;
+  onClear: () => void;
+}) {
+  const count = props.picked.length;
+  const groupOk = count >= 2 && count <= MAX_GROUP_DM_OTHERS;
+  return (
+    <div className="action-bar" role="region" aria-label="Selected people">
+      <span className="action-count">
+        {count} selected
+      </span>
+      {props.dm ? (
+        <a className="button primary" href={props.dm}>
+          Message
+        </a>
+      ) : (
+        <button
+          type="button"
+          className="primary"
+          disabled={!groupOk || props.busy}
+          title={groupOk ? undefined : `A group DM holds up to ${MAX_GROUP_DM_OTHERS} people besides you.`}
+          onClick={props.onGroupDm}
+        >
+          Group DM
+        </button>
+      )}
+      <button type="button" disabled={props.busy} onClick={props.onChannel}>
+        Create channel
+      </button>
+      <button type="button" className="link" onClick={props.onClear}>
+        Clear
+      </button>
+      {count > MAX_GROUP_DM_OTHERS && (
+        <span className="muted small">Group DMs hold up to {MAX_GROUP_DM_OTHERS} people besides you.</span>
+      )}
+    </div>
+  );
+}
+
+function ChannelDialog(props: {
+  draft: { name: string; isPrivate: boolean };
+  people: string[];
+  busy: boolean;
+  onCreate: (name: string, isPrivate: boolean) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(props.draft.name);
+  const [isPrivate, setIsPrivate] = useState(props.draft.isPrivate);
+  const slug = channelName(name);
+  return (
+    <div className="dialog-backdrop" onClick={(e) => e.target === e.currentTarget && props.onCancel()}>
+      <form
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="channel-dialog-title"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (slug) props.onCreate(slug, isPrivate);
+        }}
+        onKeyDown={(e) => e.key === 'Escape' && props.onCancel()}
+      >
+        <h2 id="channel-dialog-title">Create a channel</h2>
+        <label className="field">
+          <span>Name</span>
+          <input
+            className="text-input"
+            autoFocus
+            value={name}
+            maxLength={80}
+            placeholder="e.g. q4-launch"
+            onChange={(e) => setName(e.target.value)}
+          />
+          {name && slug !== name && <span className="hint">Slack will call it #{slug || '…'}</span>}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+          Private channel
+          <span className="hint">Only invited people can find it.</span>
+        </label>
+        <p className="muted small">
+          You and {listNames(props.people)} will be in it. Guests and people from other companies may need a Slack admin to
+          add them.
+        </p>
+        <div className="dialog-buttons">
+          <button type="button" onClick={props.onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="primary" disabled={!slug || props.busy}>
+            {props.busy ? 'Creating…' : 'Create channel'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function NoticeBar({ notice, onClose }: { notice: Notice; onClose: () => void }) {
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <div className={`toast note note-${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>
+      <span>{notice.text}</span>
+      {notice.link && (
+        <a href={notice.link} target="_blank" rel="noreferrer">
+          Open in browser
+        </a>
+      )}
+      {notice.retry && (
+        <button
+          type="button"
+          disabled={retrying}
+          onClick={async () => {
+            setRetrying(true);
+            try {
+              const res = await actionsApi.conversation(notice.retry!.userIds);
+              window.location.href = channelLink(res.teamId, res.channelId);
+              onClose();
+            } catch {
+              setRetrying(false);
+            }
+          }}
+        >
+          {notice.retry.label}
+        </button>
+      )}
+      <button type="button" className="panel-close" aria-label="Dismiss" onClick={onClose}>
+        ×
+      </button>
     </div>
   );
 }
@@ -266,8 +600,15 @@ interface ChartState {
   svgHeight: number;
 }
 
-function PersonPanel({ node, teamId, onClose }: { node: ChartNode; teamId: string; onClose: () => void }) {
-  const slackLink = `slack://user?team=${encodeURIComponent(teamId)}&id=${encodeURIComponent(node.id)}`;
+function PersonPanel(props: {
+  node: ChartNode;
+  teamId: string;
+  isViewer: boolean;
+  picked: boolean;
+  onPick: () => void;
+  onClose: () => void;
+}) {
+  const { node, teamId, onClose } = props;
   return (
     <aside className="panel" aria-label={`${node.name} details`}>
       <button type="button" className="panel-close" aria-label="Close" onClick={onClose}>
@@ -279,9 +620,16 @@ function PersonPanel({ node, teamId, onClose }: { node: ChartNode; teamId: strin
       {node.department && <p className="muted">{node.department}</p>}
       <p dangerouslySetInnerHTML={{ __html: badgeHtml(node.badge ?? null, node.externalOrg) }} />
       {node.rerouted && <p className="muted small">Their manager is deactivated or hidden, so they appear under the next manager up.</p>}
-      <a className="button primary" href={slackLink}>
-        Open profile in Slack
-      </a>
+      {!props.isViewer && (
+        <div className="panel-buttons">
+          <a className="button primary" href={dmLink(teamId, node.id)}>
+            Message
+          </a>
+          <button type="button" aria-pressed={props.picked} onClick={props.onPick}>
+            {props.picked ? 'Selected' : 'Select'}
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

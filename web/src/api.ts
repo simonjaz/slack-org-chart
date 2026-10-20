@@ -10,8 +10,7 @@ export async function loadChart(focus: string | null): Promise<LoadResult> {
   const query = focus ? `?user=${encodeURIComponent(focus)}` : '';
   const res = await fetch(`/api/chart${query}`, { credentials: 'same-origin' });
   if (res.status === 401) {
-    const next = window.location.pathname + window.location.search;
-    window.location.assign(`/auth/login?next=${encodeURIComponent(next)}`);
+    window.location.assign(loginUrl());
     return new Promise(() => {}); // the page is leaving
   }
   if (res.status === 403) {
@@ -30,4 +29,13 @@ export async function loadMe(): Promise<MeResponse | null> {
   } catch {
     return null;
   }
+}
+
+// Sign in, coming back to this page. Links from Slack carry team=, which
+// keeps people in several workspaces on the right one.
+export function loginUrl(): string {
+  const params = new URLSearchParams(window.location.search);
+  const team = params.get('team');
+  const next = window.location.pathname + window.location.search;
+  return `/auth/login?next=${encodeURIComponent(next)}${team ? `&team=${encodeURIComponent(team)}` : ''}`;
 }

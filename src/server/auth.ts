@@ -32,6 +32,8 @@ export interface AuthDeps {
   // Makes sure the person exists before their first chart load (a brand new
   // member may sign in before the next sync sees them).
   ensurePerson: (tenant: string, slackUserId: string) => Promise<void>;
+  // Called after a sign-out, to revoke the person's user token.
+  onSignOut?: (tenant: string, slackUserId: string) => Promise<void>;
   db?: PrismaClient;
   slack?: WebClient;
 }
@@ -118,7 +120,17 @@ export function authRouter(deps: AuthDeps): Router {
   router.post('/auth/logout', requireSameOrigin(deps.baseUrl), async (req, res) => {
     const parsed = parseSessionCookie(req.cookies?.[SESSION_COOKIE]);
     if (parsed) {
-      await withTenant(parsed.tenant, (tx) => tx.userSession.deleteMany({ where: { id: sha256(parsed.secret) } }), db);
+      const session = await withTenant(
+        parsed.tenant,
+        async (tx) => {
+          const row = await tx.userSession.findUnique({ where: { id: sha256(parsed.secret) } });
+          await tx.userSession.deleteMany({ where: { id: sha256(parsed.secret) } });
+          return row;
+        },
+        db,
+      );
+      // Signing out also gives back the token used for group DMs and channels.
+      if (session) await deps.onSignOut?.(parsed.tenant, session.slackUserId);
     }
     res.clearCookie(SESSION_COOKIE, cookieBase);
     res.status(204).end();
@@ -131,23 +143,36 @@ export function authRouter(deps: AuthDeps): Router {
 export function requireViewer(db: PrismaClient = defaultPrisma) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = parseSessionCookie(req.cookies?.[SESSION_COOKIE]);
-      if (!parsed) return res.status(401).json({ error: 'signed_out' });
-      const session = await withTenant(
-        parsed.tenant,
-        (tx) => tx.userSession.findUnique({ where: { id: sha256(parsed.secret) } }),
-        db,
-      );
-      if (!session || session.expiresAt < new Date()) return res.status(401).json({ error: 'signed_out' });
-      // Checked on every request so a guest flag or deactivation applies at once.
-      const denied = await accessDenied(parsed.tenant, session.slackUserId, db);
-      if (denied) return res.status(403).json({ error: 'forbidden', message: denied });
-      req.viewer = { tenant: parsed.tenant, slackUserId: session.slackUserId };
-      next();
+      const result = await loadViewer(req, db);
+      if ('viewer' in result) {
+        req.viewer = result.viewer;
+        return next();
+      }
+      if (result.denied) return res.status(403).json({ error: 'forbidden', message: result.denied });
+      res.status(401).json({ error: 'signed_out' });
     } catch (err) {
       next(err);
     }
   };
+}
+
+// Reads the session cookie. Checked on every request so a guest flag or
+// deactivation applies at once.
+export async function loadViewer(
+  req: Request,
+  db: PrismaClient = defaultPrisma,
+): Promise<{ viewer: Viewer } | { denied: string | null }> {
+  const parsed = parseSessionCookie(req.cookies?.[SESSION_COOKIE]);
+  if (!parsed) return { denied: null };
+  const session = await withTenant(
+    parsed.tenant,
+    (tx) => tx.userSession.findUnique({ where: { id: sha256(parsed.secret) } }),
+    db,
+  );
+  if (!session || session.expiresAt < new Date()) return { denied: null };
+  const denied = await accessDenied(parsed.tenant, session.slackUserId, db);
+  if (denied) return { denied };
+  return { viewer: { tenant: parsed.tenant, slackUserId: session.slackUserId } };
 }
 
 // Blocks cross-site writes. Browsers always send Origin on POST.
@@ -231,7 +256,7 @@ function parseJson<T>(value: unknown): T | null {
   }
 }
 
-function page(title: string, body: string): string {
+export function page(title: string, body: string): string {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><body style="font-family:system-ui;max-width:32rem;margin:4rem auto;padding:0 1rem"><h1>${esc(title)}</h1><p>${esc(body)}</p></body>`;
 }

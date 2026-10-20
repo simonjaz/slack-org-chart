@@ -8,6 +8,7 @@ import type {
   OverrideFields,
   PersonIssue,
   PersonPatch,
+  ProfileLinkSettings,
   SyncRunInfo,
   WorkspaceSettings,
 } from '../../shared/admin.js';
@@ -513,4 +514,67 @@ export async function listSyncRuns(tx: Tx, limit = 10): Promise<SyncRunInfo[]> {
     counts: r.counts,
     errorCount: Array.isArray(r.errors) ? r.errors.length : r.errors ? 1 : 0,
   }));
+}
+
+export type LinkField = { id: string; label: string };
+
+export async function getProfileLink(tx: Tx, tenant: string, fields: LinkField[], canFill: boolean): Promise<ProfileLinkSettings> {
+  const ws = await tx.workspace.findUniqueOrThrow({
+    where: { teamId: tenant },
+    select: { profileLinkFieldId: true, profileWriterId: true, profileWriterToken: true },
+  });
+  const writerId = ws.profileWriterToken ? ws.profileWriterId : null;
+  const [writer, run] = await Promise.all([
+    writerId ? tx.person.findUnique({ where: { teamId_slackUserId: { teamId: tenant, slackUserId: writerId } } }) : null,
+    tx.syncRun.findFirst({ where: { kind: 'profile_links' }, orderBy: { startedAt: 'desc' } }),
+  ]);
+  return {
+    fieldId: ws.profileLinkFieldId,
+    fields,
+    writer: writerId ? { slackUserId: writerId, name: writer?.name ?? null } : null,
+    lastRun: run
+      ? {
+          kind: run.kind,
+          startedAt: run.startedAt.toISOString(),
+          finishedAt: run.finishedAt?.toISOString() ?? null,
+          counts: run.counts,
+          errorCount: Array.isArray(run.errors) ? run.errors.length : run.errors ? 1 : 0,
+        }
+      : null,
+    canFill,
+  };
+}
+
+// Picks which link field to fill. Choosing a different field rewrites every
+// link on the next fill, because profile_link remembers the field per person.
+export async function setProfileLinkField(tx: Tx, tenant: string, actor: string, fieldId: string | null, fields: LinkField[]) {
+  if (fieldId && !fields.some((f) => f.id === fieldId)) {
+    throw new AdminError(400, 'unknown_field', 'That field is not a link field in this workspace.');
+  }
+  const before = await tx.workspace.findUniqueOrThrow({ where: { teamId: tenant }, select: { profileLinkFieldId: true } });
+  if (before.profileLinkFieldId === fieldId) return;
+  await tx.workspace.update({ where: { teamId: tenant }, data: { profileLinkFieldId: fieldId } });
+  await tx.auditLog.create({
+    data: {
+      teamId: tenant,
+      actor,
+      action: 'profile_link.field',
+      before: { fieldId: before.profileLinkFieldId },
+      after: { fieldId },
+    },
+  });
+}
+
+// Forgets the writer token. Returns it (encrypted) so the caller can revoke it.
+export async function disconnectProfileWriter(tx: Tx, tenant: string, actor: string): Promise<string | null> {
+  const ws = await tx.workspace.findUniqueOrThrow({
+    where: { teamId: tenant },
+    select: { profileWriterId: true, profileWriterToken: true },
+  });
+  if (!ws.profileWriterToken) return null;
+  await tx.workspace.update({ where: { teamId: tenant }, data: { profileWriterId: null, profileWriterToken: null } });
+  await tx.auditLog.create({
+    data: { teamId: tenant, actor, action: 'profile_link.disconnect', before: { writer: ws.profileWriterId } },
+  });
+  return ws.profileWriterToken;
 }

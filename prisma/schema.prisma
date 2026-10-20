@@ -35,6 +35,11 @@ model Workspace {
   allowGuestViewers    Boolean   @default(false) @map("allow_guest_viewers")
   // Slack owners and admins count as org chart admins (off by default).
   autoAdminSlackAdmins Boolean   @default(false) @map("auto_admin_slack_admins")
+  // Profile link field: the link field to fill, and the admin whose user
+  // token (encrypted) writes it.
+  profileLinkFieldId   String?   @map("profile_link_field_id")
+  profileWriterId      String?   @map("profile_writer_id")
+  profileWriterToken   String?   @map("profile_writer_token")
   installedBy          String?   @map("installed_by")
   installedAt          DateTime  @default(now()) @map("installed_at")
   uninstalledAt        DateTime? @map("uninstalled_at")
@@ -136,4 +141,30 @@ model SyncRun {
 
   @@index([teamId, startedAt])
   @@map("sync_run")
+}
+
+// A person's own user token for group DMs and channels, encrypted.
+model UserGrant {
+  teamId      String   @map("team_id")
+  slackUserId String   @map("slack_user_id")
+  // The workspace the token belongs to. Differs from team_id on Grid.
+  slackTeamId String   @map("slack_team_id")
+  token       String
+  scopes      String
+  grantedAt   DateTime @default(now()) @map("granted_at")
+
+  @@id([teamId, slackUserId])
+  @@map("user_grant")
+}
+
+// What the app last wrote to each person's profile link field.
+model ProfileLink {
+  teamId      String   @map("team_id")
+  slackUserId String   @map("slack_user_id")
+  fieldId     String   @map("field_id")
+  value       String
+  writtenAt   DateTime @default(now()) @map("written_at")
+
+  @@id([teamId, slackUserId])
+  @@map("profile_link")
 }

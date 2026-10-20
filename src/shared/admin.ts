@@ -130,3 +130,15 @@ export interface ApiError {
   error: string;
   message: string;
 }
+
+// The profile link field: a custom Slack profile field of type link that the
+// app fills with each person's chart link.
+export interface ProfileLinkSettings {
+  fieldId: string | null;
+  // Link fields in the workspace, from Slack. Empty when there are none yet.
+  fields: { id: string; label: string }[];
+  // The admin whose token writes the field, or null when not connected.
+  writer: { slackUserId: string; name: string | null } | null;
+  lastRun: SyncRunInfo | null;
+  canFill: boolean;
+}
