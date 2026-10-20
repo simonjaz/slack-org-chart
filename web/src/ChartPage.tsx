@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { OrgChart } from 'd3-org-chart';
 import type { ChartNode, ChartResponse } from '../../src/shared/chart';
 import { ancestorIds, filterNodes } from '../../src/shared/filter';
-import { loadChart, type LoadResult } from './api';
+import { loadChart, loadMe, type LoadResult } from './api';
 import { CARD_HEIGHT, CARD_WIDTH, GROUP_HEIGHT, avatarHtml, badgeHtml, cardHtml } from './card';
 
 type Datum = ChartNode & { _expanded?: boolean; _centered?: boolean };
@@ -42,6 +42,10 @@ function Chart({ data }: { data: ChartResponse }) {
   const [showExternal, setShowExternal] = useState(readShowExternal);
   const [selected, setSelected] = useState<ChartNode | null>(null);
   const [query, setQuery] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    loadMe().then((me) => setIsAdmin(Boolean(me?.isAdmin)));
+  }, []);
 
   const nodes = useMemo(
     () => (showExternal ? data.nodes : filterNodes(data.nodes, (n) => !n.badge)),
@@ -185,6 +189,11 @@ function Chart({ data }: { data: ChartResponse }) {
           <button type="button" aria-label="Zoom in" onClick={() => chartRef.current?.zoomIn()}>
             +
           </button>
+          {isAdmin && (
+            <a className="button" href="/admin">
+              Admin
+            </a>
+          )}
           {externalCount > 0 && (
             <label className="toggle">
               <input type="checkbox" checked={showExternal} onChange={(e) => setShowExternal(e.target.checked)} />

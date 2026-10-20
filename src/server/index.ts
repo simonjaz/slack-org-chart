@@ -30,6 +30,7 @@ const { web } = createApp({
   config,
   installationStore,
   enqueueUserSync: (tenant, userId) => jobs!.enqueueUserSync(tenant, userId),
+  enqueueWorkspaceSync: (tenant) => jobs!.enqueueWorkspaceSync(tenant),
   // A member who joined since the last sync gets synced before their first
   // chart load instead of being turned away.
   ensurePerson: async (tenant, userId) => {
