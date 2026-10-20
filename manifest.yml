@@ -1,0 +1,38 @@
+# Slack app manifest. Replace orgchart.example.com with BASE_URL, then paste
+# this into https://api.slack.com/apps -> Create New App -> From a manifest.
+display_information:
+  name: Org Chart
+  description: See your company's reporting lines, starting from you.
+  background_color: "#4a154b"
+features:
+  bot_user:
+    display_name: Org Chart
+    always_online: false
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
+oauth_config:
+  redirect_urls:
+    - https://orgchart.example.com/slack/oauth_redirect
+    - https://orgchart.example.com/auth/callback
+  scopes:
+    bot:
+      - users:read
+      - users:read.email
+      - users.profile:read
+      - team:read
+      - channels:read
+      - groups:read
+      - commands
+settings:
+  event_subscriptions:
+    request_url: https://orgchart.example.com/slack/events
+    bot_events:
+      - user_change
+      - team_join
+      - user_profile_changed
+      - app_uninstalled
+      - tokens_revoked
+  org_deploy_enabled: true
+  socket_mode_enabled: false
+  token_rotation_enabled: false

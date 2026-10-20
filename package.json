@@ -1,0 +1,49 @@
+{
+  "name": "slack-org-chart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Slack app that syncs profiles into an interactive org chart",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "dev:web": "vite",
+    "build": "prisma generate && tsc -p tsconfig.json && vite build",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "db:migrate": "prisma migrate deploy",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "~6.19.3",
+    "@slack/bolt": "~4.7.3",
+    "@slack/web-api": "^7.16.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "pg-boss": "~10.4.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.9",
+    "@types/d3": "7.4.3",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.18.0",
+    "@types/react": "^18.3.24",
+    "@types/react-dom": "18.3.7",
+    "@types/supertest": "6.0.3",
+    "@vitejs/plugin-react": "4.7.0",
+    "d3": "7.9.0",
+    "d3-org-chart": "3.1.1",
+    "prisma": "6.19.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.5",
+    "typescript": "~5.9.2",
+    "vite": "6.4.4",
+    "vitest": "3.2.7"
+  }
+}

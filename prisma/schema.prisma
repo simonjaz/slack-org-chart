@@ -1,0 +1,136 @@
+// Every table that holds workspace data carries team_id and is protected by
+// Postgres row-level security (see the init migration). Always query through
+// withTenant() in src/server/db.ts so the policy has a workspace to filter on.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  employee
+  multi_channel_guest
+  single_channel_guest
+  slack_connect
+  contractor
+  external
+  bot
+}
+
+model Workspace {
+  teamId              String    @id @map("team_id")
+  enterpriseId        String?   @map("enterprise_id")
+  isEnterpriseInstall Boolean   @default(false) @map("is_enterprise_install")
+  name                String?
+  domain              String?
+  // Full Bolt installation object, AES-256-GCM encrypted (it holds the bot token).
+  installation        String
+  managerFieldId      String?   @map("manager_field_id")
+  departmentFieldId   String?   @map("department_field_id")
+  plan                String?
+  allowGuestViewers   Boolean   @default(false) @map("allow_guest_viewers")
+  installedBy         String?   @map("installed_by")
+  installedAt         DateTime  @default(now()) @map("installed_at")
+  uninstalledAt       DateTime? @map("uninstalled_at")
+  deleteAfter         DateTime? @map("delete_after")
+
+  @@index([enterpriseId])
+  @@map("workspace")
+}
+
+model Person {
+  id             String   @id @default(uuid()) @db.Uuid
+  teamId         String   @map("team_id")
+  slackUserId    String   @map("slack_user_id")
+  // The user's home team. Differs from team_id for Slack Connect people.
+  homeTeamId     String?  @map("home_team_id")
+  name           String
+  displayName    String?  @map("display_name")
+  title          String?
+  department     String?
+  email          String?
+  avatarUrl      String?  @map("avatar_url")
+  userType       UserType @map("user_type")
+  externalOrg    String?  @map("external_org")
+  slackManagerId String?  @map("slack_manager_id")
+  isSlackAdmin   Boolean  @default(false) @map("is_slack_admin")
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  lastSyncedAt   DateTime @default(now()) @map("last_synced_at")
+
+  override PersonOverride?
+
+  @@unique([teamId, slackUserId])
+  @@map("person")
+}
+
+model PersonOverride {
+  personId       String    @id @map("person_id") @db.Uuid
+  teamId         String    @map("team_id")
+  managerSlackId String?   @map("manager_slack_id")
+  userType       UserType? @map("user_type")
+  externalOrg    String?   @map("external_org")
+  title          String?
+  department     String?
+  hidden         Boolean?
+  sortOrder      Int?      @map("sort_order")
+  updatedBy      String    @map("updated_by")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@map("person_override")
+}
+
+model UserSession {
+  id          String   @id // sha256 of the cookie value
+  teamId      String   @map("team_id")
+  slackUserId String   @map("slack_user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  expiresAt   DateTime @map("expires_at")
+
+  @@index([teamId, slackUserId])
+  @@map("user_session")
+}
+
+model AdminRole {
+  teamId      String   @map("team_id")
+  slackUserId String   @map("slack_user_id")
+  role        String   @default("admin")
+  grantedBy   String?  @map("granted_by")
+  grantedAt   DateTime @default(now()) @map("granted_at")
+
+  @@id([teamId, slackUserId])
+  @@map("admin_role")
+}
+
+model AuditLog {
+  id       BigInt   @id @default(autoincrement())
+  teamId   String   @map("team_id")
+  actor    String
+  action   String
+  personId String?  @map("person_id") @db.Uuid
+  before   Json?
+  after    Json?
+  at       DateTime @default(now())
+
+  @@index([teamId, at])
+  @@map("audit_log")
+}
+
+model SyncRun {
+  id         BigInt    @id @default(autoincrement())
+  teamId     String    @map("team_id")
+  kind       String
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  counts     Json?
+  errors     Json?
+
+  @@index([teamId, startedAt])
+  @@map("sync_run")
+}
