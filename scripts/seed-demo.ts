@@ -1,5 +1,5 @@
 // Fills a local database with a demo workspace and prints a session cookie,
-// so the chart can be tried without a Slack install.
+// so the chart and the admin page can be tried without a Slack install.
 //   DATABASE_URL=... TOKEN_ENCRYPTION_KEY=... npx tsx scripts/seed-demo.ts
 import { PrismaClient, type UserType } from '@prisma/client';
 import { encrypt, randomToken, sha256 } from '../src/server/crypto.js';
@@ -56,7 +56,7 @@ const people: PersonRecord[] = rows.map(([id, name, title, dept, manager, type, 
   displayName: null,
   title,
   department: dept || null,
-  email: null,
+  email: `${name.split(' ')[0]!.normalize('NFD').replace(/[^a-zA-Z]/g, '').toLowerCase()}@acme.example`,
   avatarUrl: process.env.DEMO_AVATARS ? `${process.env.DEMO_AVATARS}/${id}.svg` : null,
   userType: type ?? 'employee',
   externalOrg: org ?? null,
@@ -67,6 +67,17 @@ const people: PersonRecord[] = rows.map(([id, name, title, dept, manager, type, 
 await savePeople(TEAM, people, db);
 
 const viewer = process.argv[2] ?? 'U007';
+// The demo viewer is an admin too, so /admin can be tried.
+await withTenant(
+  TEAM,
+  (tx) =>
+    tx.adminRole.upsert({
+      where: { teamId_slackUserId: { teamId: TEAM, slackUserId: viewer } },
+      create: { teamId: TEAM, slackUserId: viewer, grantedBy: 'install' },
+      update: {},
+    }),
+  db,
+);
 const secret = randomToken();
 await withTenant(
   TEAM,

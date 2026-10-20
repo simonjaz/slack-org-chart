@@ -22,21 +22,23 @@ enum UserType {
 }
 
 model Workspace {
-  teamId              String    @id @map("team_id")
-  enterpriseId        String?   @map("enterprise_id")
-  isEnterpriseInstall Boolean   @default(false) @map("is_enterprise_install")
-  name                String?
-  domain              String?
+  teamId               String    @id @map("team_id")
+  enterpriseId         String?   @map("enterprise_id")
+  isEnterpriseInstall  Boolean   @default(false) @map("is_enterprise_install")
+  name                 String?
+  domain               String?
   // Full Bolt installation object, AES-256-GCM encrypted (it holds the bot token).
-  installation        String
-  managerFieldId      String?   @map("manager_field_id")
-  departmentFieldId   String?   @map("department_field_id")
-  plan                String?
-  allowGuestViewers   Boolean   @default(false) @map("allow_guest_viewers")
-  installedBy         String?   @map("installed_by")
-  installedAt         DateTime  @default(now()) @map("installed_at")
-  uninstalledAt       DateTime? @map("uninstalled_at")
-  deleteAfter         DateTime? @map("delete_after")
+  installation         String
+  managerFieldId       String?   @map("manager_field_id")
+  departmentFieldId    String?   @map("department_field_id")
+  plan                 String?
+  allowGuestViewers    Boolean   @default(false) @map("allow_guest_viewers")
+  // Slack owners and admins count as org chart admins (off by default).
+  autoAdminSlackAdmins Boolean   @default(false) @map("auto_admin_slack_admins")
+  installedBy          String?   @map("installed_by")
+  installedAt          DateTime  @default(now()) @map("installed_at")
+  uninstalledAt        DateTime? @map("uninstalled_at")
+  deleteAfter          DateTime? @map("delete_after")
 
   @@index([enterpriseId])
   @@map("workspace")
@@ -119,6 +121,7 @@ model AuditLog {
   at       DateTime @default(now())
 
   @@index([teamId, at])
+  @@index([teamId, personId])
   @@map("audit_log")
 }
 

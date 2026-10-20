@@ -1,3 +1,4 @@
+import type { MeResponse } from '../../src/shared/admin';
 import type { ChartResponse } from '../../src/shared/chart';
 
 export type LoadResult =
@@ -19,4 +20,14 @@ export async function loadChart(focus: string | null): Promise<LoadResult> {
   }
   if (!res.ok) return { status: 'error', message: `The chart could not load (${res.status}).` };
   return { status: 'ok', data: (await res.json()) as ChartResponse };
+}
+
+// Who is signed in. null when it cannot be told; the chart works without it.
+export async function loadMe(): Promise<MeResponse | null> {
+  try {
+    const res = await fetch('/api/me', { credentials: 'same-origin' });
+    return res.ok ? ((await res.json()) as MeResponse) : null;
+  } catch {
+    return null;
+  }
 }

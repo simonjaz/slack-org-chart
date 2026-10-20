@@ -14,6 +14,7 @@ export interface AppDeps {
   config: Config;
   installationStore: InstallationStore;
   enqueueUserSync: (tenant: string, userId: string) => Promise<void>;
+  enqueueWorkspaceSync?: (tenant: string) => Promise<void>;
   ensurePerson: (tenant: string, userId: string) => Promise<void>;
   db?: PrismaClient;
   webDistDir?: string;
@@ -85,12 +86,12 @@ export function createApp(deps: AppDeps) {
       db,
     }),
   );
-  web.use(apiRouter(db));
+  web.use(apiRouter({ db, enqueueWorkspaceSync: deps.enqueueWorkspaceSync }));
 
   const dist = deps.webDistDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
   web.use(express.static(dist, { index: false, maxAge: '1h' }));
-  // The chart is a single page app; the landing page and /chart share it.
-  web.get(['/', '/chart'], (_req, res) => {
+  // The landing page, the chart and the admin page are one single page app.
+  web.get(['/', '/chart', '/admin'], (_req, res) => {
     res.sendFile(path.join(dist, 'index.html'));
   });
 

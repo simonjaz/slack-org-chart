@@ -20,6 +20,9 @@ one Postgres database, installable into many workspaces.
 | Sign in with Slack and sessions | `src/server/auth.ts` |
 | Chart API | `GET /api/chart?user=U123` in `src/server/api.ts` |
 | Chart page | `web/src/ChartPage.tsx`, `web/src/card.ts` |
+| Admin access control | `src/server/admin/access.ts` |
+| Admin API (`/api/admin/*`) | `src/server/admin/api.ts`, `src/server/admin/service.ts` |
+| Admin page | `web/src/admin/*` |
 | Data model and tenant isolation | `prisma/schema.prisma`, `prisma/migrations/*/migration.sql` |
 
 ## How data is kept apart
@@ -58,7 +61,7 @@ npx tsx scripts/seed-demo.ts U007   # prints a session cookie for viewer U007
 ```
 
 Set that cookie (`oc_session`) for `localhost:3000` in the browser and open
-`/chart`.
+`/chart`. The demo viewer is also an admin, so `/admin` works too.
 
 ## Tests
 
@@ -85,8 +88,37 @@ a non-superuser role. CI does this with a Postgres service container.
 - **Uninstall:** `app_uninstalled` or a revoked bot token stops the sync, and
   the data is deleted 30 days later.
 
+## Admin page
+
+`/admin`, reached from the Admin button on the chart. It uses the same Sign
+in with Slack, then checks on every request that the person is an admin of
+that workspace:
+
+- The installer is the first admin. Admins add and remove others; the last
+  one cannot be removed.
+- Slack owners and admins can be admins automatically. This is a setting,
+  off by default.
+- Guests and Slack Connect people (as Slack reports them) can never be
+  admins, and neither can someone an admin marked contractor or external.
+
+What admins can do:
+
+- **People:** change someone's manager, title, department or type
+  (employee, contractor, external, plus their company name), or hide them.
+  Edits go to `person_override`, so the nightly sync never undoes them, and
+  "Reset all to Slack" removes them. Changing a manager is refused if it
+  would make a reporting loop. A Slack guest can be marked contractor or
+  external but never employee.
+- **Needs attention:** people with no manager and no reports, people whose
+  manager is deactivated, Slack reporting loops, and managers the app does
+  not know.
+- **Import:** a CSV with `email` and `manager_email` (and optional `title`
+  and `department`). A preview shows each row's result before anything is
+  written.
+- **Admins, Settings** (guest viewing, automatic Slack admins, sync status
+  and Sync now) and **History**, which lists every change from `audit_log`.
+
 ## Not in this version
 
-Admin page (overrides, CSV import), App Home, `/orgchart`, the profile link
-field, the message shortcut, and messaging or channel creation from the
-chart. The schema already has the override and admin tables they need.
+App Home, `/orgchart`, the profile link field, the message shortcut, and
+messaging or channel creation from the chart.
