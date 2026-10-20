@@ -23,6 +23,12 @@ one Postgres database, installable into many workspaces.
 | Admin access control | `src/server/admin/access.ts` |
 | Admin API (`/api/admin/*`) | `src/server/admin/api.ts`, `src/server/admin/service.ts` |
 | Admin page | `web/src/admin/*` |
+| App Home, `/orgchart`, message shortcut | `src/server/slack/surfaces.ts`, wired in `src/server/app.ts` |
+| DM, group DM and channel from the chart (`/api/actions/*`) | `src/server/actions.ts`, `web/src/actions.ts` |
+| Person's own Slack token, and the profile link writer | `src/server/slack/grants.ts` |
+| Profile link field | `src/server/slack/profileLinks.ts` |
+| Slack app manifest | `manifest.yml` (`npm run manifest -- https://host`) |
+| Deploy (Render Blueprint, Docker) | `render.yaml`, `Dockerfile`, `docs/DEPLOY.md` |
 | Data model and tenant isolation | `prisma/schema.prisma`, `prisma/migrations/*/migration.sql` |
 
 ## How data is kept apart
@@ -38,7 +44,7 @@ Slack tokens are stored AES-256-GCM encrypted with `TOKEN_ENCRYPTION_KEY`.
 ## Run it locally
 
 Requirements: Node 20+, Postgres 16, and a Slack app you can install
-(create one from `manifest.yml`).
+(create one from `manifest.yml`). To deploy, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ```sh
 npm install
@@ -118,7 +124,48 @@ What admins can do:
 - **Admins, Settings** (guest viewing, automatic Slack admins, sync status
   and Sync now) and **History**, which lists every change from `audit_log`.
 
+## Inside Slack
+
+Slack does not let apps add a button to the built-in profile card, so the
+chart opens from these places. Every link carries `team=` (picks the
+workspace at sign-in) and `user=` (centers the chart on that person).
+
+- **App Home:** the viewer, their managers, peers and direct reports with
+  photos and badges, and **Open full chart**. Long lists stop at 10 peers and
+  20 reports with a link to the rest.
+- **`/orgchart`**, **`/orgchart @name`** or **`/orgchart Jane`:** a private
+  reply with that person's place and a link. Several matches are listed.
+- **Message shortcut, View in org chart:** a modal on the message's author.
+- **Profile link field (optional):** an admin adds a custom profile field of
+  type Link, picks it on the admin page (Settings) and connects a Slack admin
+  account (`users.profile:write`). The app writes each internal person's
+  chart link into it, and new people get theirs after each full sync.
+  `profile_link` remembers what was written, so a fill only touches people
+  who are new or whose link changed. Needs a paid plan.
+
+Guests and Slack Connect people get the same "not available" answer as on
+the web chart unless an admin allows them.
+
+## Actions from the chart
+
+Tick the box on any card (or **Select** in the person panel). A bar at the
+bottom shows the count and:
+
+- **Message** (one person): opens the DM with Slack's own `slack://user`
+  link. No token needed.
+- **Group DM** (2 to 8 people): `conversations.open` as the viewer.
+- **Create channel** (any number): asks for a name and public or private,
+  then `conversations.create` and `conversations.invite` as the viewer.
+  People Slack refuses, often guests and people from other companies, are
+  named, with a one-click group DM instead when there are 8 or fewer.
+
+These run as the person, with their own user token, so the conversation is
+theirs and not the bot's. Sign in with Slack cannot carry those scopes, so
+the first group DM or channel sends them through a second Slack consent
+screen (`/auth/grant?kind=actions`); the selection is kept across it. The
+token is stored encrypted in `user_grant`, checked to belong to the signed-in
+person, revoked on sign-out and forgotten on `tokens_revoked`.
+
 ## Not in this version
 
-App Home, `/orgchart`, the profile link field, the message shortcut, and
-messaging or channel creation from the chart.
+Billing, and people without Slack accounts (manual people).

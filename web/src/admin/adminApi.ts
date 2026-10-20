@@ -5,6 +5,7 @@ import type {
   ImportResponse,
   MeResponse,
   PersonPatch,
+  ProfileLinkSettings,
   SyncRunInfo,
   WorkspaceSettings,
 } from '../../../src/shared/admin';
@@ -57,4 +58,8 @@ export const adminApi = {
     ),
   sync: () => call<{ runs: SyncRunInfo[]; canStart: boolean }>('GET', '/api/admin/sync'),
   startSync: () => call<{ ok: true }>('POST', '/api/admin/sync'),
+  profileLink: () => call<ProfileLinkSettings>('GET', '/api/admin/profile-link'),
+  setProfileLinkField: (fieldId: string | null) => call<ProfileLinkSettings>('PATCH', '/api/admin/profile-link', { fieldId }),
+  fillProfileLinks: () => call<{ ok: true }>('POST', '/api/admin/profile-link/fill'),
+  disconnectProfileWriter: () => call<ProfileLinkSettings>('DELETE', '/api/admin/profile-link/writer'),
 };

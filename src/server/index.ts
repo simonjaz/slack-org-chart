@@ -23,6 +23,8 @@ jobs = await startJobs({
   databaseUrl: config.DATABASE_URL,
   installationStore,
   nightlyHourUtc: config.NIGHTLY_SYNC_HOUR_UTC,
+  baseUrl: config.BASE_URL,
+  encryptionKey: config.TOKEN_ENCRYPTION_KEY,
   log,
 });
 
@@ -31,6 +33,15 @@ const { web } = createApp({
   installationStore,
   enqueueUserSync: (tenant, userId) => jobs!.enqueueUserSync(tenant, userId),
   enqueueWorkspaceSync: (tenant) => jobs!.enqueueWorkspaceSync(tenant),
+  enqueueProfileLinks: (tenant) => jobs!.enqueueProfileLinks(tenant),
+  // Link fields are what the profile link can be written into.
+  listLinkFields: async (tenant) => {
+    const client = await botClientFor(installationStore, tenant);
+    const res = await client.team.profile.get();
+    return (res.profile?.fields ?? [])
+      .filter((f) => f.type === 'link' && f.id)
+      .map((f) => ({ id: f.id!, label: f.label ?? f.id! }));
+  },
   // A member who joined since the last sync gets synced before their first
   // chart load instead of being turned away.
   ensurePerson: async (tenant, userId) => {

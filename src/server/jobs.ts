@@ -4,12 +4,14 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma, withSystem, withTenant } from './db.js';
 import { botClientFor } from './slack/clients.js';
 import { fullSync, syncOneUser } from './slack/sync.js';
+import { fillProfileLinks } from './slack/profileLinks.js';
 
 export const QUEUES = {
   syncWorkspace: 'sync-workspace',
   syncUser: 'sync-user',
   nightly: 'nightly-sync',
   purge: 'purge-uninstalled',
+  profileLinks: 'profile-links',
 } as const;
 
 // How many workspaces sync at once. Each workspace has at most one sync
@@ -21,6 +23,7 @@ export interface Jobs {
   boss: PgBoss;
   enqueueWorkspaceSync(tenant: string): Promise<void>;
   enqueueUserSync(tenant: string, userId: string): Promise<void>;
+  enqueueProfileLinks(tenant: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -28,6 +31,9 @@ export async function startJobs(opts: {
   databaseUrl: string;
   installationStore: InstallationStore;
   nightlyHourUtc: number;
+  // For the profile link fill.
+  baseUrl: string;
+  encryptionKey: string;
   db?: PrismaClient;
   log?: (msg: string, extra?: unknown) => void;
 }): Promise<Jobs> {
@@ -41,6 +47,7 @@ export async function startJobs(opts: {
   await boss.createQueue(QUEUES.syncUser, { name: QUEUES.syncUser, policy: 'stately', retryLimit: 5, retryBackoff: true });
   await boss.createQueue(QUEUES.nightly, { name: QUEUES.nightly, policy: 'singleton' });
   await boss.createQueue(QUEUES.purge, { name: QUEUES.purge, policy: 'singleton' });
+  await boss.createQueue(QUEUES.profileLinks, { name: QUEUES.profileLinks, policy: 'stately', retryLimit: 2, retryBackoff: true });
 
   const clientFor = (tenant: string) => botClientFor(opts.installationStore, tenant);
 
@@ -48,8 +55,16 @@ export async function startJobs(opts: {
     await boss.work<{ tenant: string }>(QUEUES.syncWorkspace, async ([job]) => {
       if (!job) return;
       await fullSync(job.data.tenant, await clientFor(job.data.tenant), { db, log });
+      // New people get their profile link after each full sync. The job
+      // does nothing when the workspace has not set the field up.
+      await enqueueProfileLinks(job.data.tenant);
     });
   }
+
+  await boss.work<{ tenant: string }>(QUEUES.profileLinks, async ([job]) => {
+    if (!job) return;
+    await fillProfileLinks(job.data.tenant, { baseUrl: opts.baseUrl, encryptionKey: opts.encryptionKey, db, log });
+  });
 
   await boss.work<{ tenant: string; userId: string }>(QUEUES.syncUser, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -81,9 +96,14 @@ export async function startJobs(opts: {
     await boss.send(QUEUES.syncWorkspace, { tenant }, { singletonKey: tenant });
   }
 
+  async function enqueueProfileLinks(tenant: string) {
+    await boss.send(QUEUES.profileLinks, { tenant }, { singletonKey: tenant });
+  }
+
   return {
     boss,
     enqueueWorkspaceSync,
+    enqueueProfileLinks,
     async enqueueUserSync(tenant, userId) {
       await boss.send(QUEUES.syncUser, { tenant, userId }, { singletonKey: `${tenant}:${userId}` });
     },
@@ -99,6 +119,8 @@ export async function purgeWorkspace(tenant: string, db: PrismaClient = defaultP
       await tx.personOverride.deleteMany({ where: { teamId: tenant } });
       await tx.person.deleteMany({ where: { teamId: tenant } });
       await tx.userSession.deleteMany({ where: { teamId: tenant } });
+      await tx.userGrant.deleteMany({ where: { teamId: tenant } });
+      await tx.profileLink.deleteMany({ where: { teamId: tenant } });
       await tx.adminRole.deleteMany({ where: { teamId: tenant } });
       await tx.auditLog.deleteMany({ where: { teamId: tenant } });
       await tx.syncRun.deleteMany({ where: { teamId: tenant } });

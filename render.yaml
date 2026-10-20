@@ -1,0 +1,47 @@
+# Render Blueprint: one web service and one Postgres database.
+# Render -> New -> Blueprint -> pick this repository. It asks for the values
+# marked sync: false; see docs/DEPLOY.md for where each one comes from.
+services:
+  - type: web
+    name: org-chart
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /healthz
+    # Migrations run before each release goes live.
+    preDeployCommand: npx prisma migrate deploy
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: org-chart-db
+          property: connectionString
+      # The service's public https origin, e.g. https://org-chart.onrender.com
+      # or your own domain. Slack must reach it, and it must match the manifest.
+      - key: BASE_URL
+        sync: false
+      - key: SLACK_CLIENT_ID
+        sync: false
+      - key: SLACK_CLIENT_SECRET
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      # Random values Render creates once. Never change TOKEN_ENCRYPTION_KEY
+      # after the first install: stored Slack tokens could not be read.
+      - key: SLACK_STATE_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: NIGHTLY_SYNC_HOUR_UTC
+        value: 2
+
+databases:
+  - name: org-chart-db
+    plan: basic-256mb
+    region: frankfurt
+    postgresMajorVersion: "16"
+    # Only the web service connects.
+    ipAllowList: []

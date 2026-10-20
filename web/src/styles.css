@@ -85,6 +85,7 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+button.primary,
 .button.primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -488,7 +489,142 @@ a:focus-visible {
   padding: 2px 8px;
 }
 
+.panel-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.panel-buttons .button {
+  margin-top: 0;
+}
+
+/* Picking people for Message, Group DM and Create channel */
+
+.card-select {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.card-select input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.card-selected {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+
+.action-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.16);
+  z-index: 4;
+}
+
+.action-count {
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+button.link {
+  border: 0;
+  background: none;
+  color: var(--focus);
+  padding: 6px 4px;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 72px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: min(640px, calc(100% - 32px));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  z-index: 5;
+}
+
+.toast.note {
+  /* Room for the dismiss button. */
+  padding: 10px 40px 10px 14px;
+}
+
+.toast .panel-close {
+  top: 4px;
+  right: 4px;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 10;
+}
+
+.dialog {
+  width: min(420px, 100%);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.24);
+}
+
+.dialog h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.dialog p {
+  margin: 0;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 @media (max-width: 600px) {
+  .action-bar {
+    left: 16px;
+    right: 16px;
+    transform: none;
+    max-width: none;
+  }
   .toolbar-title {
     width: 100%;
   }

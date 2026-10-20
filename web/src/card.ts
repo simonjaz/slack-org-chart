@@ -43,7 +43,12 @@ export function avatarHtml(node: Pick<ChartNode, 'name' | 'avatarUrl'>, size: 'm
 
 // HTML for one node. Every value from Slack is escaped: names and titles are
 // typed by people and must never become markup.
-export function cardHtml(node: ChartNode, opts: { isViewer: boolean; isFocus: boolean }): string {
+// selectable adds the checkbox that feeds the action bar (Message, Group DM,
+// Create channel). The viewer has none: they are always in the conversation.
+export function cardHtml(
+  node: ChartNode,
+  opts: { isViewer: boolean; isFocus: boolean; selectable?: boolean; selected?: boolean },
+): string {
   if (node.kind !== 'person') {
     return `<div class="card card-${node.kind}" style="height:${node.kind === 'company' ? CARD_HEIGHT : GROUP_HEIGHT}px">
       <div class="group-name">${escapeHtml(node.name)}</div>
@@ -54,6 +59,7 @@ export function cardHtml(node: ChartNode, opts: { isViewer: boolean; isFocus: bo
   if (node.badge) classes.push('card-outside', `card-${node.badge}`);
   if (opts.isViewer) classes.push('card-viewer');
   if (opts.isFocus) classes.push('card-focus');
+  if (opts.selected) classes.push('card-selected');
   const subtitle = [node.title, node.department].filter(Boolean).map(escapeHtml).join(' · ');
   return `<div class="${classes.join(' ')}" style="height:${CARD_HEIGHT}px" data-id="${escapeHtml(node.id)}">
     ${avatarHtml(node)}
@@ -62,5 +68,10 @@ export function cardHtml(node: ChartNode, opts: { isViewer: boolean; isFocus: bo
       <div class="card-title">${subtitle || '&nbsp;'}</div>
       <div class="card-meta">${badgeHtml(node.badge ?? null, node.externalOrg)}</div>
     </div>
+    ${
+      opts.selectable && !opts.isViewer
+        ? `<label class="card-select"><input type="checkbox" data-select="${escapeHtml(node.id)}"${opts.selected ? ' checked' : ''} aria-label="Select ${escapeHtml(node.name)}"></label>`
+        : ''
+    }
   </div>`;
 }

@@ -1,8 +1,16 @@
-# Slack app manifest. Replace orgchart.example.com with BASE_URL, then paste
-# this into https://api.slack.com/apps -> Create New App -> From a manifest.
+# Slack app manifest. Replace orgchart.example.com with BASE_URL (or run
+# `npm run manifest -- https://your-host`), then paste the result into
+# https://api.slack.com/apps -> Create New App -> From a manifest.
 display_information:
   name: Org Chart
   description: See your company's reporting lines, starting from you.
+  long_description: >-
+    Org Chart reads names, titles, photos and the Manager field from your
+    workspace and draws the reporting tree, opened on you. Guests and people
+    from other companies are clearly marked. Open it from App Home, the
+    /orgchart command, the "View in org chart" message shortcut or a link on
+    every profile, and start a DM, group DM or channel with the people you
+    pick on the chart.
   background_color: "#4a154b"
 features:
   bot_user:
@@ -11,10 +19,26 @@ features:
   app_home:
     home_tab_enabled: true
     messages_tab_enabled: false
+  slash_commands:
+    - command: /orgchart
+      url: https://orgchart.example.com/slack/events
+      description: Show someone's place in the org chart
+      usage_hint: "[@name]"
+      # Sends mentions as <@U123|name> so the app gets the user id.
+      should_escape: true
+  shortcuts:
+    - name: View in org chart
+      type: message
+      callback_id: view_in_org_chart
+      description: See where this message's author sits in the org chart
 oauth_config:
   redirect_urls:
+    # Install (Add to Slack)
     - https://orgchart.example.com/slack/oauth_redirect
+    # Sign in with Slack
     - https://orgchart.example.com/auth/callback
+    # Group DMs and channels, and the profile link field
+    - https://orgchart.example.com/auth/grant/callback
   scopes:
     bot:
       - users:read
@@ -24,15 +48,33 @@ oauth_config:
       - channels:read
       - groups:read
       - commands
+    # Asked for only when needed, never at install. Keep in step with
+    # SIGN_IN_SCOPES, ACTION_USER_SCOPES and PROFILE_WRITER_SCOPES in
+    # src/server/config.ts.
+    user:
+      - openid
+      - email
+      - profile
+      - im:write
+      - mpim:write
+      - channels:manage
+      - channels:write.invites
+      - groups:write
+      - groups:write.invites
+      - users.profile:write
 settings:
   event_subscriptions:
     request_url: https://orgchart.example.com/slack/events
     bot_events:
+      - app_home_opened
       - user_change
       - team_join
       - user_profile_changed
       - app_uninstalled
       - tokens_revoked
+  interactivity:
+    is_enabled: true
+    request_url: https://orgchart.example.com/slack/events
   org_deploy_enabled: true
   socket_mode_enabled: false
   token_rotation_enabled: false
